@@ -27,14 +27,17 @@ install:
 databases := GeoLite2-City GeoLite2-Country GeoLite2-ASN
 
 $(databases):
-ifndef GEOIP_LICENSE_KEY
-	$(error GEOIP_LICENSE_KEY must be set. Please see https://blog.maxmind.com/2019/12/18/significant-changes-to-accessing-and-using-geolite2-databases/)
-endif
+
 	mkdir -p data
+
+ifdef GEOIP_LICENSE_KEY
 	@curl -fsSL -m 30 "https://download.maxmind.com/app/geoip_download?edition_id=$@&license_key=$(GEOIP_LICENSE_KEY)&suffix=tar.gz" | tar $(TAR_OPTS) --strip-components=1 -C $(CURDIR)/data -xzf - '*.mmdb'
-	test ! -f data/GeoLite2-City.mmdb || mv data/GeoLite2-City.mmdb data/city.mmdb
-	test ! -f data/GeoLite2-Country.mmdb || mv data/GeoLite2-Country.mmdb data/country.mmdb
-	test ! -f data/GeoLite2-ASN.mmdb || mv data/GeoLite2-ASN.mmdb data/asn.mmdb
+	test ! -f data/city.mmdb || $(error Failed to download GEOIP databases, GEOIP_LICENSE_KEY is probably wrong. Please see https://blog.maxmind.com/2019/12/18/significant-changes-to-accessing-and-using-geolite2-databases/)
+else
+	cp GeoLite2-City.mmdb data/city.mmdb
+	cp GeoLite2-Country.mmdb data/country.mmdb
+	cp GeoLite2-ASN.mmdb data/asn.mmdb
+endif
 
 geoip-download: $(databases)
 
@@ -60,7 +63,7 @@ docker-test:
 docker-push: docker-test docker-login
 	$(DOCKER) push $(DOCKER_IMAGE)
 
-docker-pushx: docker-multiarch-builder docker-test docker-login
+docker-pushx: geoip-download docker-multiarch-builder docker-test docker-login
 	$(DOCKER) buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t $(DOCKER_IMAGE) --push .
 
 xinstall:
