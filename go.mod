@@ -2,7 +2,7 @@ module github.com/mpolden/echoip
 
 go 1.23
 
-require github.com/oschwald/geoip2-golang v1.11.0
+require github.com/oschwald/geoip2-golang v1.13.0
 
 require (
 	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
