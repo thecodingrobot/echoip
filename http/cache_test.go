@@ -2,7 +2,7 @@ package http
 
 import (
 	"fmt"
-	"net"
+	"net/netip"
 	"testing"
 )
 
@@ -21,7 +21,7 @@ func TestCacheCapacity(t *testing.T) {
 		c := NewCache(tt.capacity)
 		var responses []Response
 		for i := 0; i < tt.addCount; i++ {
-			ip := net.ParseIP(fmt.Sprintf("192.0.2.%d", i))
+			ip, _ := netip.ParseAddr(fmt.Sprintf("192.0.2.%d", i))
 			r := Response{IP: ip}
 			responses = append(responses, r)
 			c.Set(ip, r)
@@ -47,7 +47,7 @@ func TestCacheCapacity(t *testing.T) {
 
 func TestCacheDuplicate(t *testing.T) {
 	c := NewCache(10)
-	ip := net.ParseIP("192.0.2.1")
+	ip, _ := netip.ParseAddr("192.0.2.1")
 	response := Response{IP: ip}
 	c.Set(ip, response)
 	c.Set(ip, response)
@@ -63,7 +63,7 @@ func TestCacheDuplicate(t *testing.T) {
 func TestCacheResize(t *testing.T) {
 	c := NewCache(10)
 	for i := 1; i <= 20; i++ {
-		ip := net.ParseIP(fmt.Sprintf("192.0.2.%d", i))
+		ip, _ := netip.ParseAddr(fmt.Sprintf("192.0.2.%d", i))
 		r := Response{IP: ip}
 		c.Set(ip, r)
 	}
@@ -79,7 +79,8 @@ func TestCacheResize(t *testing.T) {
 	if got, want := c.evictions, uint64(0); got != want {
 		t.Errorf("want %d evictions, got %d", want, got)
 	}
-	r := Response{IP: net.ParseIP("192.0.2.42")}
+	ip, _ := netip.ParseAddr("192.0.2.42")
+	r := Response{IP: ip}
 	c.Set(r.IP, r)
 	if got, want := len(c.entries), 5; got != want {
 		t.Errorf("want %d entries, got %d", want, got)

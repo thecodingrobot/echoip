@@ -4,7 +4,7 @@ import (
 	"container/list"
 	"fmt"
 	"hash/fnv"
-	"net"
+	"net/netip"
 	"sync"
 )
 
@@ -33,13 +33,13 @@ func NewCache(capacity int) *Cache {
 	}
 }
 
-func key(ip net.IP) uint64 {
+func key(ip netip.Addr) uint64 {
 	h := fnv.New64a()
-	h.Write(ip)
+	h.Write(ip.AsSlice())
 	return h.Sum64()
 }
 
-func (c *Cache) Set(ip net.IP, resp Response) {
+func (c *Cache) Set(ip netip.Addr, resp Response) {
 	if c.capacity == 0 {
 		return
 	}
@@ -66,7 +66,7 @@ func (c *Cache) Set(ip net.IP, resp Response) {
 	c.entries[k] = c.values.PushBack(resp)
 }
 
-func (c *Cache) Get(ip net.IP) (Response, bool) {
+func (c *Cache) Get(ip netip.Addr) (Response, bool) {
 	k := key(ip)
 	c.mu.RLock()
 	defer c.mu.RUnlock()

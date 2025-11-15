@@ -2,15 +2,15 @@ package geo
 
 import (
 	"math"
-	"net"
+	"net/netip"
 
-	geoip2 "github.com/oschwald/geoip2-golang"
+	geoip2 "github.com/oschwald/geoip2-golang/v2"
 )
 
 type Reader interface {
-	Country(net.IP) (Country, error)
-	City(net.IP) (City, error)
-	ASN(net.IP) (ASN, error)
+	Country(netip.Addr) (Country, error)
+	City(netip.Addr) (City, error)
+	ASN(netip.Addr) (ASN, error)
 	IsEmpty() bool
 }
 
@@ -26,7 +26,6 @@ type City struct {
 	Longitude  float64
 	PostalCode string
 	Timezone   string
-	MetroCode  uint
 	RegionName string
 	RegionCode string
 }
@@ -68,7 +67,7 @@ func Open(countryDB, cityDB string, asnDB string) (Reader, error) {
 	return &geoip{country: country, city: city, asn: asn}, nil
 }
 
-func (g *geoip) Country(ip net.IP) (Country, error) {
+func (g *geoip) Country(ip netip.Addr) (Country, error) {
 	country := Country{}
 	if g.country == nil {
 		return country, nil
@@ -77,24 +76,24 @@ func (g *geoip) Country(ip net.IP) (Country, error) {
 	if err != nil {
 		return country, err
 	}
-	if c, exists := record.Country.Names["en"]; exists {
-		country.Name = c
+	if record.Country.Names.English != "" {
+		country.Name = record.Country.Names.English
 	}
-	if c, exists := record.RegisteredCountry.Names["en"]; exists && country.Name == "" {
-		country.Name = c
+	if record.RegisteredCountry.Names.English != "" && country.Name == "" {
+		country.Name = record.RegisteredCountry.Names.English
 	}
-	if record.Country.IsoCode != "" {
-		country.ISO = record.Country.IsoCode
+	if record.Country.ISOCode != "" {
+		country.ISO = record.Country.ISOCode
 	}
-	if record.RegisteredCountry.IsoCode != "" && country.ISO == "" {
-		country.ISO = record.RegisteredCountry.IsoCode
+	if record.RegisteredCountry.ISOCode != "" && country.ISO == "" {
+		country.ISO = record.RegisteredCountry.ISOCode
 	}
 	isEU := record.Country.IsInEuropeanUnion || record.RegisteredCountry.IsInEuropeanUnion
 	country.IsEU = &isEU
 	return country, nil
 }
 
-func (g *geoip) City(ip net.IP) (City, error) {
+func (g *geoip) City(ip netip.Addr) (City, error) {
 	city := City{}
 	if g.city == nil {
 		return city, nil
@@ -103,26 +102,22 @@ func (g *geoip) City(ip net.IP) (City, error) {
 	if err != nil {
 		return city, err
 	}
-	if c, exists := record.City.Names["en"]; exists {
-		city.Name = c
+	if record.City.Names.English != "" {
+		city.Name = record.City.Names.English
 	}
 	if len(record.Subdivisions) > 0 {
-		if c, exists := record.Subdivisions[0].Names["en"]; exists {
-			city.RegionName = c
+		if record.Subdivisions[0].Names.English != "" {
+			city.RegionName = record.Subdivisions[0].Names.English
 		}
-		if record.Subdivisions[0].IsoCode != "" {
-			city.RegionCode = record.Subdivisions[0].IsoCode
+		if record.Subdivisions[0].ISOCode != "" {
+			city.RegionCode = record.Subdivisions[0].ISOCode
 		}
 	}
-	if !math.IsNaN(record.Location.Latitude) {
-		city.Latitude = record.Location.Latitude
+	if !math.IsNaN(*record.Location.Latitude) {
+		city.Latitude = *record.Location.Latitude
 	}
-	if !math.IsNaN(record.Location.Longitude) {
-		city.Longitude = record.Location.Longitude
-	}
-	// Metro code is US Only https://maxmind.github.io/GeoIP2-dotnet/doc/v2.7.1/html/P_MaxMind_GeoIP2_Model_Location_MetroCode.htm
-	if record.Location.MetroCode > 0 && record.Country.IsoCode == "US" {
-		city.MetroCode = record.Location.MetroCode
+	if !math.IsNaN(*record.Location.Longitude) {
+		city.Longitude = *record.Location.Longitude
 	}
 	if record.Postal.Code != "" {
 		city.PostalCode = record.Postal.Code
@@ -134,7 +129,7 @@ func (g *geoip) City(ip net.IP) (City, error) {
 	return city, nil
 }
 
-func (g *geoip) ASN(ip net.IP) (ASN, error) {
+func (g *geoip) ASN(ip netip.Addr) (ASN, error) {
 	asn := ASN{}
 	if g.asn == nil {
 		return asn, nil

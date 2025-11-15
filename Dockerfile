@@ -1,5 +1,5 @@
 # Build
-FROM golang:1.23-bookworm AS build
+FROM golang:1.25-trixie AS build
 WORKDIR /go/src/github.com/mpolden/echoip
 COPY . .
 
@@ -8,7 +8,7 @@ ENV GO111MODULE=on CGO_ENABLED=0
 RUN make
 
 # Run
-FROM scratch
+FROM gcr.io/distroless/static-debian12
 EXPOSE 8080
 
 COPY --from=build /go/bin/echoip /opt/echoip/

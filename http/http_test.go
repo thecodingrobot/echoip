@@ -3,9 +3,9 @@ package http
 import (
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
@@ -13,20 +13,20 @@ import (
 	"github.com/mpolden/echoip/iputil/geo"
 )
 
-func lookupAddr(net.IP) (string, error) { return "localhost", nil }
-func lookupPort(net.IP, uint64) error   { return nil }
+func lookupAddr(netip.Addr) (string, error) { return "localhost", nil }
+func lookupPort(netip.Addr, uint64) error   { return nil }
 
 type testDb struct{}
 
-func (t *testDb) Country(net.IP) (geo.Country, error) {
+func (t *testDb) Country(netip.Addr) (geo.Country, error) {
 	return geo.Country{Name: "Elbonia", ISO: "EB", IsEU: new(bool)}, nil
 }
 
-func (t *testDb) City(net.IP) (geo.City, error) {
-	return geo.City{Name: "Bornyasherk", RegionName: "North Elbonia", RegionCode: "1234", MetroCode: 1234, PostalCode: "1234", Latitude: 63.416667, Longitude: 10.416667, Timezone: "Europe/Bornyasherk"}, nil
+func (t *testDb) City(netip.Addr) (geo.City, error) {
+	return geo.City{Name: "Bornyasherk", RegionName: "North Elbonia", RegionCode: "1234", PostalCode: "1234", Latitude: 63.416667, Longitude: 10.416667, Timezone: "Europe/Bornyasherk"}, nil
 }
 
-func (t *testDb) ASN(net.IP) (geo.ASN, error) {
+func (t *testDb) ASN(netip.Addr) (geo.ASN, error) {
 	return geo.ASN{AutonomousSystemNumber: 59795, AutonomousSystemOrganization: "Hosting4Real"}, nil
 }
 
@@ -154,7 +154,7 @@ func TestJSONHandlers(t *testing.T) {
 		out    string
 		status int
 	}{
-		{s.URL, "{\n  \"ip\": \"127.0.0.1\",\n  \"ip_decimal\": 2130706433,\n  \"country\": \"Elbonia\",\n  \"country_iso\": \"EB\",\n  \"country_eu\": false,\n  \"region_name\": \"North Elbonia\",\n  \"region_code\": \"1234\",\n  \"metro_code\": 1234,\n  \"zip_code\": \"1234\",\n  \"city\": \"Bornyasherk\",\n  \"latitude\": 63.416667,\n  \"longitude\": 10.416667,\n  \"time_zone\": \"Europe/Bornyasherk\",\n  \"asn\": \"AS59795\",\n  \"asn_org\": \"Hosting4Real\",\n  \"hostname\": \"localhost\",\n  \"user_agent\": {\n    \"product\": \"curl\",\n    \"version\": \"7.2.6.0\",\n    \"raw_value\": \"curl/7.2.6.0\"\n  }\n}", 200},
+		{s.URL, "{\n  \"ip\": \"127.0.0.1\",\n  \"ip_decimal\": 2130706433,\n  \"country\": \"Elbonia\",\n  \"country_iso\": \"EB\",\n  \"country_eu\": false,\n  \"region_name\": \"North Elbonia\",\n  \"region_code\": \"1234\",\n  \"zip_code\": \"1234\",\n  \"city\": \"Bornyasherk\",\n  \"latitude\": 63.416667,\n  \"longitude\": 10.416667,\n  \"time_zone\": \"Europe/Bornyasherk\",\n  \"asn\": \"AS59795\",\n  \"asn_org\": \"Hosting4Real\",\n  \"hostname\": \"localhost\",\n  \"user_agent\": {\n    \"product\": \"curl\",\n    \"version\": \"7.2.6.0\",\n    \"raw_value\": \"curl/7.2.6.0\"\n  }\n}", 200},
 		{s.URL + "/port/foo", "{\n  \"status\": 400,\n  \"error\": \"invalid port: foo\"\n}", 400},
 		{s.URL + "/port/0", "{\n  \"status\": 400,\n  \"error\": \"invalid port: 0\"\n}", 400},
 		{s.URL + "/port/65537", "{\n  \"status\": 400,\n  \"error\": \"invalid port: 65537\"\n}", 400},
@@ -243,8 +243,8 @@ func TestIPFromRequest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out := net.ParseIP(tt.out)
-		if !ip.Equal(out) {
+		out, _ := netip.ParseAddr(tt.out)
+		if ip != out {
 			t.Errorf("Expected %s, got %s", out, ip)
 		}
 	}

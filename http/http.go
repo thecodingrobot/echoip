@@ -6,17 +6,18 @@ import (
 	"html/template"
 	"io/ioutil"
 	"log"
+	"net"
 	"path/filepath"
 	"strings"
 
 	"net/http/pprof"
+	"net/netip"
 
 	"github.com/mpolden/echoip/iputil"
 	"github.com/mpolden/echoip/iputil/geo"
 	"github.com/mpolden/echoip/useragent"
 
 	"math/big"
-	"net"
 	"net/http"
 	"strconv"
 )
@@ -29,8 +30,8 @@ const (
 type Server struct {
 	Template   string
 	IPHeaders  []string
-	LookupAddr func(net.IP) (string, error)
-	LookupPort func(net.IP, uint64) error
+	LookupAddr func(netip.Addr) (string, error)
+	LookupPort func(netip.Addr, uint64) error
 	cache      *Cache
 	gr         geo.Reader
 	profile    bool
@@ -38,14 +39,13 @@ type Server struct {
 }
 
 type Response struct {
-	IP         net.IP               `json:"ip"`
+	IP         netip.Addr           `json:"ip"`
 	IPDecimal  *big.Int             `json:"ip_decimal"`
 	Country    string               `json:"country,omitempty"`
 	CountryISO string               `json:"country_iso,omitempty"`
 	CountryEU  *bool                `json:"country_eu,omitempty"`
 	RegionName string               `json:"region_name,omitempty"`
 	RegionCode string               `json:"region_code,omitempty"`
-	MetroCode  uint                 `json:"metro_code,omitempty"`
 	PostalCode string               `json:"zip_code,omitempty"`
 	City       string               `json:"city,omitempty"`
 	Latitude   float64              `json:"latitude,omitempty"`
@@ -58,9 +58,9 @@ type Response struct {
 }
 
 type PortResponse struct {
-	IP        net.IP `json:"ip"`
-	Port      uint64 `json:"port"`
-	Reachable bool   `json:"reachable"`
+	IP        netip.Addr `json:"ip"`
+	Port      uint64     `json:"port"`
+	Reachable bool       `json:"reachable"`
 }
 
 func New(db geo.Reader, cache *Cache, profile bool) *Server {
@@ -80,7 +80,7 @@ func ipFromForwardedForHeader(v string) string {
 // * `headers` - the specific HTTP headers to trust
 // * `r` - the incoming HTTP request
 // * `customIP` - whether to allow the IP to be pulled from query parameters
-func ipFromRequest(headers []string, r *http.Request, customIP bool) (net.IP, error) {
+func ipFromRequest(headers []string, r *http.Request, customIP bool) (netip.Addr, error) {
 	remoteIP := ""
 	if customIP && r.URL != nil {
 		if v, ok := r.URL.Query()["ip"]; ok {
@@ -101,13 +101,13 @@ func ipFromRequest(headers []string, r *http.Request, customIP bool) (net.IP, er
 	if remoteIP == "" {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
-			return nil, err
+			return netip.Addr{}, err
 		}
 		remoteIP = host
 	}
-	ip := net.ParseIP(remoteIP)
-	if ip == nil {
-		return nil, fmt.Errorf("could not parse IP: %s", remoteIP)
+	ip, err := netip.ParseAddr(remoteIP)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("could not parse IP: %s", remoteIP)
 	}
 	return ip, nil
 }
@@ -153,7 +153,6 @@ func (s *Server) newResponse(r *http.Request) (Response, error) {
 		CountryEU:  country.IsEU,
 		RegionName: city.RegionName,
 		RegionCode: city.RegionCode,
-		MetroCode:  city.MetroCode,
 		PostalCode: city.PostalCode,
 		City:       city.Name,
 		Latitude:   city.Latitude,

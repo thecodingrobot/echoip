@@ -2,7 +2,7 @@ package iputil
 
 import (
 	"math/big"
-	"net"
+	"net/netip"
 	"testing"
 )
 
@@ -19,7 +19,8 @@ func TestToDecimal(t *testing.T) {
 		{"8000::", msb},
 	}
 	for _, tt := range tests {
-		i := ToDecimal(net.ParseIP(tt.in))
+		addr, _ := netip.ParseAddr(tt.in)
+		i := ToDecimal(addr)
 		if tt.out.Cmp(i) != 0 {
 			t.Errorf("Expected %d, got %d for IP %s", tt.out, i, tt.in)
 		}
