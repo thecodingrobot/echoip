@@ -13,10 +13,17 @@ jobs:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: install go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.25"
       - name: build and test
         run: make
+      - name: upload binary artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: echoip-${{ runner.os }}-${{ runner.arch }}
+          path: ~/go/bin/echoip
+          if-no-files-found: error
+          retention-days: 90
