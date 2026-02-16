@@ -21,7 +21,7 @@ jobs:
       - name: build and test
         run: make
       - name: upload binary artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: echoip-${{ runner.os }}-${{ runner.arch }}
           path: ~/go/bin/echoip
