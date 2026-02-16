@@ -113,10 +113,10 @@ func (g *geoip) City(ip netip.Addr) (City, error) {
 			city.RegionCode = record.Subdivisions[0].ISOCode
 		}
 	}
-	if !math.IsNaN(*record.Location.Latitude) {
+	if record.Location.Latitude != nil && !math.IsNaN(*record.Location.Latitude) {
 		city.Latitude = *record.Location.Latitude
 	}
-	if !math.IsNaN(*record.Location.Longitude) {
+	if record.Location.Longitude != nil && !math.IsNaN(*record.Location.Longitude) {
 		city.Longitude = *record.Location.Longitude
 	}
 	if record.Postal.Code != "" {
