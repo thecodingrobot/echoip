@@ -19,6 +19,15 @@ func LookupAddr(ip netip.Addr) (string, error) {
 }
 
 func LookupPort(ip netip.Addr, port uint64) error {
+	if !ip.IsValid() ||
+		ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		ip.IsMulticast() {
+		return fmt.Errorf("refusing to dial non-public address: %s", ip)
+	}
 	address := fmt.Sprintf("[%s]:%d", ip, port)
 	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
