@@ -8,6 +8,10 @@ XGOARCH := amd64
 XGOOS := linux
 XBIN := $(XGOOS)_$(XGOARCH)/echoip
 
+.PHONY: all test vet check-fmt lint install geoip-download \
+        docker-multiarch-builder docker-build docker-login docker-test \
+        docker-push docker-pushx xinstall publish run
+
 all: lint test install
 
 test:
@@ -17,12 +21,12 @@ vet:
 	go vet ./...
 
 check-fmt:
-	bash -c "diff --line-format='%L' <(echo -n) <(gofmt -d -s .)"
+	@out=$$(gofmt -l -s .); test -z "$$out" || (echo "Unformatted files:"; echo "$$out"; exit 1)
 
 lint: check-fmt vet
 
 install:
-	go install ./...
+	go install -trimpath -ldflags="-s -w" ./...
 
 databases := GeoLite2-City GeoLite2-Country GeoLite2-ASN
 
@@ -32,7 +36,7 @@ $(databases):
 
 ifdef GEOIP_LICENSE_KEY
 	@curl -fsSL -m 30 "https://download.maxmind.com/app/geoip_download?edition_id=$@&license_key=$(GEOIP_LICENSE_KEY)&suffix=tar.gz" | tar $(TAR_OPTS) --strip-components=1 -C $(CURDIR)/data -xzf - '*.mmdb'
-	test ! -f data/city.mmdb || $(error Failed to download GEOIP databases, GEOIP_LICENSE_KEY is probably wrong. Please see https://blog.maxmind.com/2019/12/18/significant-changes-to-accessing-and-using-geolite2-databases/)
+	@if [ -f data/city.mmdb ]; then echo "ERROR: Failed to download GEOIP databases, GEOIP_LICENSE_KEY is probably wrong. Please see https://blog.maxmind.com/2019/12/18/significant-changes-to-accessing-and-using-geolite2-databases/"; exit 1; fi
 else
 	cp GeoLite2-City.mmdb data/city.mmdb
 	cp GeoLite2-Country.mmdb data/country.mmdb
