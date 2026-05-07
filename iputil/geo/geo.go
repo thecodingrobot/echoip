@@ -12,6 +12,9 @@ type Reader interface {
 	City(netip.Addr) (City, error)
 	ASN(netip.Addr) (ASN, error)
 	IsEmpty() bool
+	HasCountry() bool
+	HasCity() bool
+	HasASN() bool
 }
 
 type Country struct {
@@ -148,5 +151,11 @@ func (g *geoip) ASN(ip netip.Addr) (ASN, error) {
 }
 
 func (g *geoip) IsEmpty() bool {
-	return g.country == nil && g.city == nil
+	return g.country == nil && g.city == nil && g.asn == nil
 }
+
+func (g *geoip) HasCountry() bool { return g.country != nil }
+
+func (g *geoip) HasCity() bool { return g.city != nil }
+
+func (g *geoip) HasASN() bool { return g.asn != nil }
