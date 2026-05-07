@@ -1,14 +1,17 @@
 package http
 
 import (
+	"context"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mpolden/echoip/iputil/geo"
 )
@@ -280,5 +283,87 @@ func TestCLIMatcher(t *testing.T) {
 		if got := cliMatcher(r); got != tt.out {
 			t.Errorf("Expected %t, got %t for %q", tt.out, got, tt.in)
 		}
+	}
+}
+
+func TestGracefulShutdown(t *testing.T) {
+	// Verify ListenAndServe drains an in-flight request when ctx is cancelled.
+	srv := testServer()
+	srv.Handler() // ensure routes registered
+
+	// Bind to an ephemeral port so the test is hermetic.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	// Inject a slow handler via a custom mux wrapping the real one.
+	slowReady := make(chan struct{})
+	slowDone := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/slow", func(w http.ResponseWriter, r *http.Request) {
+		close(slowReady)
+		time.Sleep(200 * time.Millisecond)
+		w.Write([]byte("ok"))
+		close(slowDone)
+	})
+
+	httpSrv := newServer(addr, mux)
+	ctx, cancel := context.WithCancel(context.Background())
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- listenAndServe(ctx, httpSrv) }()
+
+	// Wait for the listener to be up by retrying a short connection.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			c.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server never came up: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Fire the slow request, wait until handler started, then cancel.
+	respCh := make(chan *http.Response, 1)
+	respErr := make(chan error, 1)
+	go func() {
+		resp, err := http.Get("http://" + addr + "/slow")
+		if err != nil {
+			respErr <- err
+			return
+		}
+		respCh <- resp
+	}()
+	<-slowReady
+	cancel()
+
+	// Shutdown must wait for the in-flight request to finish.
+	select {
+	case resp := <-respCh:
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(body) != "ok" {
+			t.Fatalf("in-flight request lost: got %q", body)
+		}
+	case err := <-respErr:
+		t.Fatalf("in-flight request failed during shutdown: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight request did not complete within 2s")
+	}
+
+	select {
+	case <-slowDone:
+	default:
+		t.Fatal("slow handler did not finish")
+	}
+
+	if err := <-serveErr; err != nil {
+		t.Fatalf("listenAndServe returned error: %v", err)
 	}
 }

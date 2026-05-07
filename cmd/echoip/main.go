@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
-	"strings"
-
 	"os"
+	"os/signal"
+	"strings"
+	"sync"
+	"syscall"
 
 	"github.com/mpolden/echoip/http"
 	"github.com/mpolden/echoip/iputil"
@@ -44,7 +47,7 @@ func main() {
 	flag.Parse()
 	if len(flag.Args()) != 0 {
 		flag.Usage()
-		return
+		os.Exit(2)
 	}
 
 	r, err := geo.Open(*countryFile, *cityFile, *asnFile)
@@ -82,16 +85,49 @@ func main() {
 	if *cacheSize > 0 {
 		log.Printf("Cache capacity set to %d", *cacheSize)
 	}
+
+	// signal.NotifyContext cancels ctx on SIGINT/SIGTERM, triggering
+	// graceful shutdown of all running listeners.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+
 	if *profileAddr != "" {
 		log.Printf("Enabling debug/profiling handlers on http://%s (do not expose publicly)", *profileAddr)
+		wg.Add(1)
 		go func(addr string) {
-			if err := server.ListenAndServeDebug(addr); err != nil {
-				log.Fatalf("debug listener on %s failed: %s", addr, err)
+			defer wg.Done()
+			if err := server.ListenAndServeDebug(ctx, addr); err != nil {
+				errCh <- err
+				stop() // trigger shutdown of the public listener too
 			}
 		}(*profileAddr)
 	}
-	log.Printf("Listening on http://%s", *listen)
-	if err := server.ListenAndServe(*listen); err != nil {
-		log.Fatal(err)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Printf("Listening on http://%s", *listen)
+		if err := server.ListenAndServe(ctx, *listen); err != nil {
+			errCh <- err
+			stop()
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("Shutdown signal received, draining in-flight requests...")
+	wg.Wait()
+	close(errCh)
+
+	var failed bool
+	for err := range errCh {
+		log.Printf("listener error: %s", err)
+		failed = true
 	}
+	if failed {
+		os.Exit(1)
+	}
+	log.Println("Shutdown complete")
 }

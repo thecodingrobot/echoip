@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -496,15 +497,50 @@ func newServer(addr string, h http.Handler) *http.Server {
 	}
 }
 
-func (s *Server) ListenAndServe(addr string) error {
-	return newServer(addr, s.Handler()).ListenAndServe()
+// shutdownTimeout is how long an HTTP server is given to drain in-flight
+// requests once shutdown has been initiated.
+const shutdownTimeout = 30 * time.Second
+
+// listenAndServe runs srv until either it returns an error or ctx is
+// cancelled. On cancellation, it calls Shutdown with shutdownTimeout to
+// drain in-flight requests. Returns nil on a clean shutdown.
+func listenAndServe(ctx context.Context, srv *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		err := srv.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown failed: %w", err)
+		}
+		<-errCh
+		return nil
+	}
+}
+
+// ListenAndServe starts the public HTTP server on addr. It blocks until ctx
+// is cancelled or the server fails. On cancellation, in-flight requests are
+// given shutdownTimeout to complete.
+func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
+	return listenAndServe(ctx, newServer(addr, s.Handler()))
 }
 
 // ListenAndServeDebug starts an HTTP server bound to addr that serves the
 // debug handler. The caller is responsible for ensuring addr is not reachable
-// from untrusted networks.
-func (s *Server) ListenAndServeDebug(addr string) error {
-	return newServer(addr, s.DebugHandler()).ListenAndServe()
+// from untrusted networks. It blocks until ctx is cancelled or the server
+// fails.
+func (s *Server) ListenAndServeDebug(ctx context.Context, addr string) error {
+	return listenAndServe(ctx, newServer(addr, s.DebugHandler()))
 }
 
 func formatCoordinate(c float64) string {
