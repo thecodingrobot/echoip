@@ -37,7 +37,7 @@ func main() {
 	portLookup := flag.Bool("p", false, "Enable port lookup")
 	template := flag.String("t", "html", "Path to template dir")
 	cacheSize := flag.Int("C", 0, "Size of response cache. Set to 0 to disable")
-	profile := flag.Bool("P", false, "Enables profiling handlers")
+	profileAddr := flag.String("P", "", "Listening address for debug/profiling handlers (e.g. 127.0.0.1:6060). Empty disables them. NEVER expose this to the public internet: it serves pprof (which can pin a CPU for 30s) and a cache resize POST endpoint.")
 	sponsor := flag.Bool("s", false, "Show sponsor logo")
 	var headers multiValueFlag
 	flag.Var(&headers, "H", "Header to trust for remote IP, if present (e.g. X-Real-IP)")
@@ -52,10 +52,15 @@ func main() {
 		log.Fatal(err)
 	}
 	cache := http.NewCache(*cacheSize)
-	server := http.New(r, cache, *profile)
+	server := http.New(r, cache)
 	server.IPHeaders = headers
 	if _, err := os.Stat(*template); err == nil {
 		server.Template = *template
+		if *template != "" {
+			if err := server.LoadTemplates(); err != nil {
+				log.Fatal(err)
+			}
+		}
 	} else {
 		log.Printf("Not configuring default handler: Template not found: %s", *template)
 	}
@@ -77,8 +82,13 @@ func main() {
 	if *cacheSize > 0 {
 		log.Printf("Cache capacity set to %d", *cacheSize)
 	}
-	if *profile {
-		log.Printf("Enabling profiling handlers")
+	if *profileAddr != "" {
+		log.Printf("Enabling debug/profiling handlers on http://%s (do not expose publicly)", *profileAddr)
+		go func(addr string) {
+			if err := server.ListenAndServeDebug(addr); err != nil {
+				log.Fatalf("debug listener on %s failed: %s", addr, err)
+			}
+		}(*profileAddr)
 	}
 	log.Printf("Listening on http://%s", *listen)
 	if err := server.ListenAndServe(*listen); err != nil {

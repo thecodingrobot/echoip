@@ -32,6 +32,12 @@ func (t *testDb) ASN(netip.Addr) (geo.ASN, error) {
 
 func (t *testDb) IsEmpty() bool { return false }
 
+func (t *testDb) HasCountry() bool { return true }
+
+func (t *testDb) HasCity() bool { return true }
+
+func (t *testDb) HasASN() bool { return true }
+
 func testServer() *Server {
 	return &Server{cache: NewCache(100), gr: &testDb{}, LookupAddr: lookupAddr, LookupPort: lookupPort}
 }
@@ -182,8 +188,7 @@ func TestJSONHandlers(t *testing.T) {
 func TestCacheHandler(t *testing.T) {
 	log.SetOutput(io.Discard)
 	srv := testServer()
-	srv.profile = true
-	s := httptest.NewServer(srv.Handler())
+	s := httptest.NewServer(srv.DebugHandler())
 	got, _, err := httpGet(s.URL+"/debug/cache/", jsonMediaType, "")
 	if err != nil {
 		t.Fatal(err)
@@ -197,8 +202,7 @@ func TestCacheHandler(t *testing.T) {
 func TestCacheResizeHandler(t *testing.T) {
 	log.SetOutput(io.Discard)
 	srv := testServer()
-	srv.profile = true
-	s := httptest.NewServer(srv.Handler())
+	s := httptest.NewServer(srv.DebugHandler())
 	_, got, err := httpPost(s.URL+"/debug/cache/resize", "10")
 	if err != nil {
 		t.Fatal(err)

@@ -9,6 +9,7 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"net/http/pprof"
 	"net/netip"
@@ -34,8 +35,8 @@ type Server struct {
 	LookupPort func(netip.Addr, uint64) error
 	cache      *Cache
 	gr         geo.Reader
-	profile    bool
 	Sponsor    bool
+	tmpl       *template.Template
 }
 
 type Response struct {
@@ -63,8 +64,24 @@ type PortResponse struct {
 	Reachable bool       `json:"reachable"`
 }
 
-func New(db geo.Reader, cache *Cache, profile bool) *Server {
-	return &Server{cache: cache, gr: db, profile: profile}
+func New(db geo.Reader, cache *Cache) *Server {
+	return &Server{cache: cache, gr: db}
+}
+
+// LoadTemplates parses all templates under s.Template once and caches the
+// resulting *template.Template on the server. Callers should invoke this
+// after setting Template and before serving requests, to avoid re-parsing
+// the template directory on every browser hit.
+func (s *Server) LoadTemplates() error {
+	if s.Template == "" {
+		return fmt.Errorf("template directory is not set")
+	}
+	t, err := template.ParseGlob(s.Template + "/*")
+	if err != nil {
+		return fmt.Errorf("parsing templates in %s: %w", s.Template, err)
+	}
+	s.tmpl = t
+	return nil
 }
 
 func ipFromForwardedForHeader(v string) string {
@@ -327,13 +344,12 @@ func (s *Server) cacheHandler(w http.ResponseWriter, r *http.Request) *appError 
 }
 
 func (s *Server) DefaultHandler(w http.ResponseWriter, r *http.Request) *appError {
+	if s.tmpl == nil {
+		return notFound(nil).WithMessage("404 page not found")
+	}
 	response, err := s.newResponse(r)
 	if err != nil {
 		return badRequest(err).WithMessage(err.Error())
-	}
-	t, err := template.ParseGlob(s.Template + "/*")
-	if err != nil {
-		return internalServerError(err)
 	}
 	json, err := json.MarshalIndent(response, "", "  ")
 	if err != nil {
@@ -361,7 +377,7 @@ func (s *Server) DefaultHandler(w http.ResponseWriter, r *http.Request) *appErro
 		s.LookupPort != nil,
 		s.Sponsor,
 	}
-	if err := t.Execute(w, &data); err != nil {
+	if err := s.tmpl.Execute(w, &data); err != nil {
 		return internalServerError(err)
 	}
 	return nil
@@ -433,11 +449,15 @@ func (s *Server) Handler() http.Handler {
 	r.Route("GET", "/", s.CLIHandler).MatcherFunc(cliMatcher)
 	r.Route("GET", "/", s.CLIHandler).Header("Accept", textMediaType)
 	r.Route("GET", "/ip", s.CLIHandler)
-	if !s.gr.IsEmpty() {
+	if s.gr.HasCountry() {
 		r.Route("GET", "/country", s.CLICountryHandler)
 		r.Route("GET", "/country-iso", s.CLICountryISOHandler)
+	}
+	if s.gr.HasCity() {
 		r.Route("GET", "/city", s.CLICityHandler)
 		r.Route("GET", "/coordinates", s.CLICoordinatesHandler)
+	}
+	if s.gr.HasASN() {
 		r.Route("GET", "/asn", s.CLIASNHandler)
 		r.Route("GET", "/asn-org", s.CLIASNOrgHandler)
 	}
@@ -452,22 +472,48 @@ func (s *Server) Handler() http.Handler {
 		r.RoutePrefix("GET", "/port/", s.PortHandler)
 	}
 
-	// Profiling
-	if s.profile {
-		r.Route("POST", "/debug/cache/resize", s.cacheResizeHandler)
-		r.Route("GET", "/debug/cache/", s.cacheHandler)
-		r.Route("GET", "/debug/pprof/cmdline", wrapHandlerFunc(pprof.Cmdline))
-		r.Route("GET", "/debug/pprof/profile", wrapHandlerFunc(pprof.Profile))
-		r.Route("GET", "/debug/pprof/symbol", wrapHandlerFunc(pprof.Symbol))
-		r.Route("GET", "/debug/pprof/trace", wrapHandlerFunc(pprof.Trace))
-		r.RoutePrefix("GET", "/debug/pprof/", wrapHandlerFunc(pprof.Index))
-	}
-
 	return r.Handler()
 }
 
+// DebugHandler returns an http.Handler exposing pprof and cache debug
+// endpoints. These routes leak runtime information and include a POST endpoint
+// (/debug/cache/resize) plus pprof.Profile, which can pin a CPU for the
+// duration of a profile capture. The returned handler must only be served on
+// a private listener (e.g. loopback) and never exposed to the public internet.
+func (s *Server) DebugHandler() http.Handler {
+	r := NewRouter()
+	r.Route("POST", "/debug/cache/resize", s.cacheResizeHandler)
+	r.Route("GET", "/debug/cache/", s.cacheHandler)
+	r.Route("GET", "/debug/pprof/cmdline", wrapHandlerFunc(pprof.Cmdline))
+	r.Route("GET", "/debug/pprof/profile", wrapHandlerFunc(pprof.Profile))
+	r.Route("GET", "/debug/pprof/symbol", wrapHandlerFunc(pprof.Symbol))
+	r.Route("GET", "/debug/pprof/trace", wrapHandlerFunc(pprof.Trace))
+	r.RoutePrefix("GET", "/debug/pprof/", wrapHandlerFunc(pprof.Index))
+	return r.Handler()
+}
+
+// newServer returns an *http.Server with conservative timeouts to mitigate
+// slowloris-style resource exhaustion attacks.
+func newServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+}
+
 func (s *Server) ListenAndServe(addr string) error {
-	return http.ListenAndServe(addr, s.Handler())
+	return newServer(addr, s.Handler()).ListenAndServe()
+}
+
+// ListenAndServeDebug starts an HTTP server bound to addr that serves the
+// debug handler. The caller is responsible for ensuring addr is not reachable
+// from untrusted networks.
+func (s *Server) ListenAndServeDebug(addr string) error {
+	return newServer(addr, s.DebugHandler()).ListenAndServe()
 }
 
 func formatCoordinate(c float64) string {
