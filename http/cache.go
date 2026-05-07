@@ -10,7 +10,7 @@ import (
 
 type Cache struct {
 	capacity  int
-	mu        sync.RWMutex
+	mu        sync.Mutex
 	entries   map[uint64]*list.Element
 	values    *list.List
 	evictions uint64
@@ -49,12 +49,13 @@ func (c *Cache) Set(ip netip.Addr, resp Response) {
 	minEvictions := len(c.entries) - c.capacity + 1
 	if minEvictions > 0 { // At or above capacity. Shrink the cache
 		evicted := 0
-		for el := c.values.Front(); el != nil && evicted < minEvictions; {
-			value := el.Value.(Response)
-			delete(c.entries, key(value.IP))
-			next := el.Next()
+		for evicted < minEvictions {
+			el := c.values.Front()
+			if el == nil {
+				break
+			}
+			delete(c.entries, key(el.Value.(Response).IP))
 			c.values.Remove(el)
-			el = next
 			evicted++
 		}
 		c.evictions += uint64(evicted)
@@ -68,29 +69,38 @@ func (c *Cache) Set(ip netip.Addr, resp Response) {
 
 func (c *Cache) Get(ip netip.Addr) (Response, bool) {
 	k := key(ip)
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	r, ok := c.entries[k]
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.entries[k]
 	if !ok {
 		return Response{}, false
 	}
-	return r.Value.(Response), true
+	c.values.MoveToBack(el)
+	return el.Value.(Response), true
 }
 
 func (c *Cache) Resize(capacity int) error {
 	if capacity < 0 {
-		return fmt.Errorf("invalid capacity: %d\n", capacity)
+		return fmt.Errorf("invalid capacity: %d", capacity)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.capacity = capacity
-	c.evictions = 0
+	for len(c.entries) > c.capacity {
+		el := c.values.Front()
+		if el == nil {
+			break
+		}
+		delete(c.entries, key(el.Value.(Response).IP))
+		c.values.Remove(el)
+		c.evictions++
+	}
 	return nil
 }
 
 func (c *Cache) Stats() CacheStats {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return CacheStats{
 		Size:      len(c.entries),
 		Capacity:  c.capacity,
