@@ -1,2 +1,31 @@
+# Exclude everything not required by the Docker build.
+# Build needs: Go sources, go.mod/sum, Makefile, html/.
+
+.git
+.github
+.gitignore
+.dockerignore
+.vscode
+.claude
+
+# Geo databases — never ship via build context (license + size)
+*.mmdb
+data/
+
+# Stray binaries and build outputs
+/x
+/bin/
+/echoip
+/vendor/
+*.exe
+*.test
+*.out
+*.prof
+
+# Docs
+*.md
+LICENSE
+
+# Dockerfiles themselves are not needed inside the build context
 Dockerfile
 Dockerfile.geoip

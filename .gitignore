@@ -4,4 +4,11 @@
 .vscode/
 /bin/
 /echoip
+/x
 *.mmdb
+
+# Build artifacts
+*.exe
+*.test
+*.out
+*.prof
