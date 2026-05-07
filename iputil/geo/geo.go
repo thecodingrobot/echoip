@@ -1,6 +1,7 @@
 package geo
 
 import (
+	"cmp"
 	"math"
 	"net/netip"
 
@@ -79,18 +80,8 @@ func (g *geoip) Country(ip netip.Addr) (Country, error) {
 	if err != nil {
 		return country, err
 	}
-	if record.Country.Names.English != "" {
-		country.Name = record.Country.Names.English
-	}
-	if record.RegisteredCountry.Names.English != "" && country.Name == "" {
-		country.Name = record.RegisteredCountry.Names.English
-	}
-	if record.Country.ISOCode != "" {
-		country.ISO = record.Country.ISOCode
-	}
-	if record.RegisteredCountry.ISOCode != "" && country.ISO == "" {
-		country.ISO = record.RegisteredCountry.ISOCode
-	}
+	country.Name = cmp.Or(record.Country.Names.English, record.RegisteredCountry.Names.English)
+	country.ISO = cmp.Or(record.Country.ISOCode, record.RegisteredCountry.ISOCode)
 	isEU := record.Country.IsInEuropeanUnion || record.RegisteredCountry.IsInEuropeanUnion
 	country.IsEU = &isEU
 	return country, nil
@@ -105,16 +96,10 @@ func (g *geoip) City(ip netip.Addr) (City, error) {
 	if err != nil {
 		return city, err
 	}
-	if record.City.Names.English != "" {
-		city.Name = record.City.Names.English
-	}
+	city.Name = record.City.Names.English
 	if len(record.Subdivisions) > 0 {
-		if record.Subdivisions[0].Names.English != "" {
-			city.RegionName = record.Subdivisions[0].Names.English
-		}
-		if record.Subdivisions[0].ISOCode != "" {
-			city.RegionCode = record.Subdivisions[0].ISOCode
-		}
+		city.RegionName = record.Subdivisions[0].Names.English
+		city.RegionCode = record.Subdivisions[0].ISOCode
 	}
 	if record.Location.Latitude != nil && !math.IsNaN(*record.Location.Latitude) {
 		city.Latitude = *record.Location.Latitude
@@ -122,12 +107,8 @@ func (g *geoip) City(ip netip.Addr) (City, error) {
 	if record.Location.Longitude != nil && !math.IsNaN(*record.Location.Longitude) {
 		city.Longitude = *record.Location.Longitude
 	}
-	if record.Postal.Code != "" {
-		city.PostalCode = record.Postal.Code
-	}
-	if record.Location.TimeZone != "" {
-		city.Timezone = record.Location.TimeZone
-	}
+	city.PostalCode = record.Postal.Code
+	city.Timezone = record.Location.TimeZone
 
 	return city, nil
 }
@@ -141,12 +122,8 @@ func (g *geoip) ASN(ip netip.Addr) (ASN, error) {
 	if err != nil {
 		return asn, err
 	}
-	if record.AutonomousSystemNumber > 0 {
-		asn.AutonomousSystemNumber = record.AutonomousSystemNumber
-	}
-	if record.AutonomousSystemOrganization != "" {
-		asn.AutonomousSystemOrganization = record.AutonomousSystemOrganization
-	}
+	asn.AutonomousSystemNumber = record.AutonomousSystemNumber
+	asn.AutonomousSystemOrganization = record.AutonomousSystemOrganization
 	return asn, nil
 }
 
