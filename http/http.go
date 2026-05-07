@@ -185,10 +185,14 @@ func (s *Server) newResponse(r *http.Request) (Response, error) {
 }
 
 func (s *Server) newPortResponse(r *http.Request) (PortResponse, error) {
-	lastElement := filepath.Base(r.URL.Path)
-	port, err := strconv.ParseUint(lastElement, 10, 16)
+	portStr := r.PathValue("port")
+	if portStr == "" {
+		// Fallback for callers that didn't route through the ServeMux pattern.
+		portStr = filepath.Base(r.URL.Path)
+	}
+	port, err := strconv.ParseUint(portStr, 10, 16)
 	if err != nil || port < 1 || port > 65535 {
-		return PortResponse{Port: port}, fmt.Errorf("invalid port: %s", lastElement)
+		return PortResponse{Port: port}, fmt.Errorf("invalid port: %s", portStr)
 	}
 	ip, err := ipFromRequest(s.IPHeaders, r, false)
 	if err != nil {
@@ -392,46 +396,73 @@ func (fn appHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// rootHandler dispatches GET / based on content negotiation, replicating the
+// behavior of the previous custom router. Order matters: explicit Accept
+// headers win over User-Agent sniffing, which wins over the HTML fallback.
+func (s *Server) rootHandler(w http.ResponseWriter, r *http.Request) *appError {
+	accept := r.Header.Get("Accept")
+	switch accept {
+	case jsonMediaType:
+		return s.JSONHandler(w, r)
+	case textMediaType:
+		return s.CLIHandler(w, r)
+	}
+	if cliMatcher(r) {
+		return s.CLIHandler(w, r)
+	}
+	if s.Template != "" {
+		return s.DefaultHandler(w, r)
+	}
+	return NotFoundHandler(w, r)
+}
+
+// muxNotFoundWrapper routes unmatched requests through NotFoundHandler so 404
+// responses honor content negotiation, instead of ServeMux's plain text 404.
+func muxNotFoundWrapper(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, pattern := mux.Handler(r); pattern == "" {
+			appHandler(NotFoundHandler).ServeHTTP(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) Handler() http.Handler {
-	r := NewRouter()
+	mux := http.NewServeMux()
 
 	// Health
-	r.Route("GET", "/health", s.HealthHandler)
+	mux.Handle("GET /health", appHandler(s.HealthHandler))
+
+	// Root: content negotiation between JSON/CLI/HTML.
+	mux.Handle("GET /{$}", appHandler(s.rootHandler))
 
 	// JSON
-	r.Route("GET", "/", s.JSONHandler).Header("Accept", jsonMediaType)
-	r.Route("GET", "/json", s.JSONHandler)
+	mux.Handle("GET /json", appHandler(s.JSONHandler))
 
 	// CLI
-	r.Route("GET", "/", s.CLIHandler).MatcherFunc(cliMatcher)
-	r.Route("GET", "/", s.CLIHandler).Header("Accept", textMediaType)
-	r.Route("GET", "/ip", s.CLIHandler)
+	mux.Handle("GET /ip", appHandler(s.CLIHandler))
 	if s.gr.HasCountry() {
-		r.Route("GET", "/country", s.cliField(func(r Response) string { return r.Country }))
-		r.Route("GET", "/country-iso", s.cliField(func(r Response) string { return r.CountryISO }))
+		mux.Handle("GET /country", appHandler(s.cliField(func(r Response) string { return r.Country })))
+		mux.Handle("GET /country-iso", appHandler(s.cliField(func(r Response) string { return r.CountryISO })))
 	}
 	if s.gr.HasCity() {
-		r.Route("GET", "/city", s.cliField(func(r Response) string { return r.City }))
-		r.Route("GET", "/coordinates", s.cliField(func(r Response) string {
+		mux.Handle("GET /city", appHandler(s.cliField(func(r Response) string { return r.City })))
+		mux.Handle("GET /coordinates", appHandler(s.cliField(func(r Response) string {
 			return fmt.Sprintf("%s,%s", formatCoordinate(r.Latitude), formatCoordinate(r.Longitude))
-		}))
+		})))
 	}
 	if s.gr.HasASN() {
-		r.Route("GET", "/asn", s.cliField(func(r Response) string { return r.ASN }))
-		r.Route("GET", "/asn-org", s.cliField(func(r Response) string { return r.ASNOrg }))
-	}
-
-	// Browser
-	if s.Template != "" {
-		r.Route("GET", "/", s.DefaultHandler)
+		mux.Handle("GET /asn", appHandler(s.cliField(func(r Response) string { return r.ASN })))
+		mux.Handle("GET /asn-org", appHandler(s.cliField(func(r Response) string { return r.ASNOrg })))
 	}
 
 	// Port testing
 	if s.LookupPort != nil {
-		r.RoutePrefix("GET", "/port/", s.PortHandler)
+		mux.Handle("GET /port/{port}", appHandler(s.PortHandler))
 	}
 
-	return r.Handler()
+	return muxNotFoundWrapper(mux)
 }
 
 // DebugHandler returns an http.Handler exposing pprof and cache debug
@@ -440,15 +471,16 @@ func (s *Server) Handler() http.Handler {
 // duration of a profile capture. The returned handler must only be served on
 // a private listener (e.g. loopback) and never exposed to the public internet.
 func (s *Server) DebugHandler() http.Handler {
-	r := NewRouter()
-	r.Route("POST", "/debug/cache/resize", s.cacheResizeHandler)
-	r.Route("GET", "/debug/cache/", s.cacheHandler)
-	r.Route("GET", "/debug/pprof/cmdline", wrapHandlerFunc(pprof.Cmdline))
-	r.Route("GET", "/debug/pprof/profile", wrapHandlerFunc(pprof.Profile))
-	r.Route("GET", "/debug/pprof/symbol", wrapHandlerFunc(pprof.Symbol))
-	r.Route("GET", "/debug/pprof/trace", wrapHandlerFunc(pprof.Trace))
-	r.RoutePrefix("GET", "/debug/pprof/", wrapHandlerFunc(pprof.Index))
-	return r.Handler()
+	mux := http.NewServeMux()
+	mux.Handle("POST /debug/cache/resize", appHandler(s.cacheResizeHandler))
+	mux.Handle("GET /debug/cache/", appHandler(s.cacheHandler))
+	mux.Handle("GET /debug/pprof/cmdline", wrapHandlerFunc(pprof.Cmdline))
+	mux.Handle("GET /debug/pprof/profile", wrapHandlerFunc(pprof.Profile))
+	mux.Handle("GET /debug/pprof/symbol", wrapHandlerFunc(pprof.Symbol))
+	mux.Handle("GET /debug/pprof/trace", wrapHandlerFunc(pprof.Trace))
+	// Trailing slash = subtree match, catches /debug/pprof/ and /debug/pprof/<profile>.
+	mux.Handle("GET /debug/pprof/", wrapHandlerFunc(pprof.Index))
+	return muxNotFoundWrapper(mux)
 }
 
 // newServer returns an *http.Server with conservative timeouts to mitigate
